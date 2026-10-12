@@ -375,6 +375,7 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: ""
 targets:

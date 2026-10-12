@@ -153,7 +153,10 @@ def main() -> None:
     if IS_MAC and args.phases == 'all':
         xb = ['xcodebuild', '-project', 'BenchApp.xcodeproj', '-scheme', 'BenchApp', '-derivedDataPath', str(dd)]
         sim = ['-destination', 'generic/platform=iOS Simulator']
-        phase('app: build-for-testing (clean)', xb + sim + ['build-for-testing'], gen)
+        if phase('app: build-for-testing (clean)', xb + sim + ['build-for-testing'], gen) != 0:
+            result['disk_free_gb_end'] = free_gb(gen)
+            (out / f'{args.label}.json').write_text(json.dumps(result, indent=2))
+            sys.exit('App build failed; later app phases skipped so their times are not misleading.')
         edited = gen / 'Package/Sources/BenchKit0/File0.swift'
         edited.write_text(edited.read_text() + '\npublic let benchEdit = 1\n')
         phase('app: build-for-testing (1 edit)', xb + sim + ['build-for-testing'], gen)
