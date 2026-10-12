@@ -8,7 +8,7 @@ Phase (Linux): package tests only.
 While a phase runs, a sampler records memory pressure and swap use every 2 seconds, so a runner that
 is short of memory shows up as swap or pressure rather than only as a slow time.
 
-Usage: python3 bench/run.py --label laptop [--generated generated] [--phases all|package]
+Usage: python3 bench/run.py --label laptop [--generated generated] [--phases all|build|package] [--xcodebuild WRAPPER]
 """
 from __future__ import annotations
 
@@ -125,8 +125,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--label', required=True)
     parser.add_argument('--generated', default='generated')
-    parser.add_argument('--phases', default='all', choices=['all', 'package'])
+    parser.add_argument('--phases', default='all', choices=['all', 'build', 'package'],
+                        help='build = everything except the simulator phases')
     parser.add_argument('--out', default='results')
+    parser.add_argument('--xcodebuild', default='xcodebuild', help='a wrapper to call instead, e.g. one that waits for a shared build slot')
     args = parser.parse_args()
 
     gen = Path(args.generated).resolve()
@@ -150,9 +152,10 @@ def main() -> None:
     phase('package: build tests (clean)', ['swift', 'build', '--build-tests'], package)
     phase('package: run tests', ['swift', 'test', '--skip-build'], package)
 
-    if IS_MAC and args.phases == 'all':
-        xb = ['xcodebuild', '-project', 'BenchApp.xcodeproj', '-scheme', 'BenchApp', '-derivedDataPath', str(dd)]
-        sim = ['-destination', 'generic/platform=iOS Simulator']
+    if IS_MAC and args.phases in ('all', 'build'):
+        xb = [args.xcodebuild, '-project', 'BenchApp.xcodeproj', '-scheme', 'BenchApp', '-derivedDataPath', str(dd)]
+        # arm64 only: a generic simulator build otherwise compiles x86_64 too, which no Apple silicon Mac runs.
+        sim = ['-destination', 'generic/platform=iOS Simulator', 'ARCHS=arm64']
         if phase('app: build-for-testing (clean)', xb + sim + ['build-for-testing'], gen) != 0:
             result['disk_free_gb_end'] = free_gb(gen)
             (out / f'{args.label}.json').write_text(json.dumps(result, indent=2))
@@ -162,7 +165,7 @@ def main() -> None:
         phase('app: build-for-testing (1 edit)', xb + sim + ['build-for-testing'], gen)
         phase('app: device build (no signing)', xb + ['-destination', 'generic/platform=iOS',
               'CODE_SIGNING_ALLOWED=NO', 'build'], gen)
-        device = pick_simulator()
+        device = pick_simulator() if args.phases == 'all' else None
         if device:
             phase('simulator: boot', ['xcrun', 'simctl', 'bootstatus', device, '-b'], gen)
             dest = ['-destination', f'id={device}']
@@ -170,7 +173,7 @@ def main() -> None:
             phase('app: one UI test', xb + dest + ['-only-testing:BenchAppUITests', 'test-without-building'], gen)
             subprocess.call(['xcrun', 'simctl', 'shutdown', device])
             subprocess.call(['xcrun', 'simctl', 'delete', device])
-        else:
+        elif args.phases == 'all':
             result['phases'].append({'phase': 'simulator: boot', 'seconds': None, 'exit': 'no iOS runtime'})
 
     result['disk_free_gb_end'] = free_gb(gen)
