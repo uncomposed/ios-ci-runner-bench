@@ -1,0 +1,84 @@
+name: Runner benchmark
+
+# Manual only: no schedule, no push or pull_request triggers. Each run is started by hand,
+# and the whole benchmark is meant to run a handful of times, not continuously.
+on:
+  workflow_dispatch:
+    inputs:
+      concurrency_test:
+        description: Also run 5 identical macOS jobs at once to see the slowdown
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    container: swift:6.2
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: command -v python3 || (apt-get update && apt-get install -y python3)
+      - run: python3 bench/generate.py
+      - run: python3 bench/run.py --label linux-ubuntu-latest --phases package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: result-linux
+          path: results/
+          retention-days: 14
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, xcode-27]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: python3 bench/generate.py && cd generated && xcodegen generate --quiet
+      - run: python3 bench/run.py --label ${{ matrix.runner }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.runner }}
+          path: results/
+          retention-days: 14
+
+  concurrent:
+    if: ${{ inputs.concurrency_test }}
+    needs: macos
+    strategy:
+      matrix:
+        copy: [1, 2, 3, 4, 5]
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: python3 bench/generate.py && cd generated && xcodegen generate --quiet
+      - run: python3 bench/run.py --label concurrent-${{ matrix.copy }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-concurrent-${{ matrix.copy }}
+          path: results/
+          retention-days: 14
+
+  summary:
+    if: always()
+    needs: [linux, macos, concurrent]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: results/
+      - run: python3 bench/summarize.py results >> "$GITHUB_STEP_SUMMARY"
